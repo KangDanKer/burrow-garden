@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Burrow Garden – a Squeekchain companion</title>
+<meta name="description" content="A cozy garden that only grows while the Squeekchain hamster is running.">
+<style>
+:root{--bg:#1a1a20;--card:#23232b;--tx:#f1efe6;--mut:#a5a5b2;--gold:#e8b931;--blue:#6e93ff;--bd:#33333d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,sans-serif;display:flex;justify-content:center;padding:20px}
+main{width:100%;max-width:560px}
+h1{margin:0;font-size:28px}h1 span{color:var(--gold)}
+.mut{color:var(--mut);font-size:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin:14px 0}
+#banner{display:none;background:#5a1f1f;border:1px solid #b44;border-radius:10px;padding:10px 14px;margin:12px 0}
+.row{display:flex;justify-content:space-between;align-items:center;gap:10px}
+#pill{padding:4px 12px;border-radius:99px;font-weight:700;font-size:13px;background:var(--bd)}
+#pill.on{background:var(--gold);color:#1a1a20}
+#hamster{font-size:56px;text-align:center}
+#wheel.spin{animation:s var(--d,2s) linear infinite;display:inline-block}
+@keyframes s{to{transform:rotate(360deg)}}
+#plots{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center}
+.p{background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:10px 0;font-size:30px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}
+.stats b{display:block;font-size:22px;color:var(--gold)}
+button{background:none;border:1px solid var(--bd);color:var(--mut);border-radius:8px;padding:6px 12px;cursor:pointer}
+@media (prefers-reduced-motion:reduce){#wheel.spin{animation:none}}
+</style>
+</head>
+<body>
+<main>
+<h1>Burrow <span>Garden</span></h1>
+<p class="mut">Unofficial Squeekchain companion. Your garden grows only while the real hamster runs.</p>
+<div id="banner" role="status">Reconnecting… live data looks stale. The garden is paused and polling continues.</div>
+<div class="card">
+ <div class="row"><span>Wheel status</span><span id="pill">…</span></div>
+ <div id="hamster"><span id="wheel">🎡</span> <span id="face">🐹</span></div>
+ <p class="mut" id="info" style="text-align:center">Waiting for first reading…</p>
+</div>
+<div class="card"><div id="plots"></div></div>
+<div class="card stats">
+ <div><b id="seeds">0</b><span class="mut">settlement seeds</span></div>
+ <div><b id="gardens">0</b><span class="mut">gardens grown</span></div>
+ <div><b id="pct">0%</b><span class="mut">current garden</span></div>
+</div>
+<p class="mut">Growth per reading = 1 + RPM÷30 while spinning. Each new settled round adds one seed. Progress is saved only in this browser. No prices or balances are shown or invented.
+ <button id="reset">Reset</button></p>
+</main>
+<script>
+const API='https://api.squeekchain.com/v1/status',KEY='burrowGarden.v1',PLOTS=8,PER=60,STAGES=['·','🌱','🌿','🌼','🌻'];
+let mem=null;
+function load(){try{const v=JSON.parse(localStorage.getItem(KEY));if(v&&isFinite(v.g)&&isFinite(v.seeds)&&isFinite(v.gardens))return v}catch(e){}return mem||{g:0,seeds:0,gardens:0}}
+function save(){mem=S;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+let S=load(),lastOk=0,lastSettled=null,live={active:false,rpm:0};
+const $=i=>document.getElementById(i);
+function find(o,names,d){d=d||0;if(!o||typeof o!=='object'||d>4)return;
+ for(const k of Object.keys(o))if(names.includes(k.toLowerCase()))return o[k];
+ for(const k of Object.keys(o)){const r=find(o[k],names,d+1);if(r!==undefined)return r}}
+function parse(j){
+ const rpm=Number(find(j,['rpm','speed']))||0;
+ const flag=find(j,['spinning','active','isspinning','isactive']);
+ const txt=find(j,['wheelstate','wheel','state','status']);
+ let active=typeof flag==='boolean'?flag:/active|spin|run/i.test(String(txt??''))||(txt===undefined&&rpm>0);
+ const sr=Number(find(j,['settledthroughround']));
+ return{active,rpm,settled:isFinite(sr)?sr:null};
+}
+async function poll(){
+ const c=new AbortController(),t=setTimeout(()=>c.abort(),4000);
+ try{
+  const r=await fetch(API,{signal:c.signal,cache:'no-store'});
+  if(!r.ok)throw new Error(r.status);
+  const p=parse(await r.json());
+  lastOk=Date.now();live=p;
+  if(p.settled!==null){if(lastSettled!==null&&p.settled>lastSettled)S.seeds+=p.settled-lastSettled;lastSettled=p.settled}
+  if(p.active){S.g+=1+p.rpm/30;while(S.g>=PLOTS*PER){S.g-=PLOTS*PER;S.gardens++}}
+  save();
+ }catch(e){}finally{clearTimeout(t)}
+ render();
+}
+function render(){
+ const stale=Date.now()-lastOk>6000,on=live.active&&!stale;
+ $('banner').style.display=stale?'block':'none';
+ const pill=$('pill');pill.textContent=stale?'STALE':on?'SPINNING':'IDLE';pill.className=on?'on':'';
+ $('face').textContent=on?'🐹':'😴';
+ const w=$('wheel');w.className=on?'spin':'';if(on)w.style.setProperty('--d',Math.max(.4,2-live.rpm/60)+'s');
+ $('info').textContent=stale?'No fresh reading yet.':on?'Running at '+Math.round(live.rpm)+' RPM. The garden is growing.':'Napping. Nothing grows until the wheel moves.';
+ let h='';for(let i=0;i<PLOTS;i++){const s=Math.max(0,Math.min(4,Math.floor((S.g-i*PER)/(PER/4))));h+='<div class="p">'+STAGES[s]+'</div>'}
+ $('plots').innerHTML=h;
+ $('seeds').textContent=S.seeds;$('gardens').textContent=S.gardens;$('pct').textContent=Math.floor(S.g/(PLOTS*PER)*100)+'%';
+}
+$('reset').onclick=()=>{if(confirm('Reset your garden?')){S={g:0,seeds:0,gardens:0};save();render()}};
+render();poll();setInterval(poll,1500);
+</script>
+</body>
+</html>
